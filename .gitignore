@@ -1,0 +1,8 @@
+out/
+*/__pycache__/
+*/*/__pycache__/
+tests/update_goldens.py
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.vscode
