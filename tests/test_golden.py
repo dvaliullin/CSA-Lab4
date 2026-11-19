@@ -90,9 +90,7 @@ def run_pipeline(golden_data: dict[str, object]) -> dict[str, object]:
 
         stdout_body = stdout_text if (not stdout_text or stdout_text.endswith("\n")) else stdout_text + "\n"
         formatted_stdout = (
-            f"source LoC: {total_loc} code instr: {len(listing)}\n"
-            f"{stdout_body}"
-            f"instr: {instr_cnt} ticks: {ticks_cnt}\n"
+            f"source LoC: {total_loc} code instr: {len(listing)}\n{stdout_body}instr: {instr_cnt} ticks: {ticks_cnt}\n"
         )
 
         return {
@@ -120,6 +118,12 @@ def test_golden(golden_path: Path, request: pytest.FixtureRequest) -> None:
         return
 
     assert results["out_code"] == golden_data.get("out_code"), f"Machine code mismatch in {golden_path.name}"
-    assert results["out_code_hex"].strip() == str(golden_data.get("out_code_hex", "")).strip(), f"Hex listing mismatch in {golden_path.name}"
-    assert results["out_stdout"].strip() == str(golden_data.get("out_stdout", "")).strip(), f"Stdout mismatch in {golden_path.name}"
-    assert results["out_log"].strip() == str(golden_data.get("out_log", "")).strip(), f"Log mismatch in {golden_path.name}"
+    assert results["out_code_hex"].strip() == str(golden_data.get("out_code_hex", "")).strip(), (
+        f"Hex listing mismatch in {golden_path.name}"
+    )
+    assert results["out_stdout"].strip() == str(golden_data.get("out_stdout", "")).strip(), (
+        f"Stdout mismatch in {golden_path.name}"
+    )
+    assert results["out_log"].strip() == str(golden_data.get("out_log", "")).strip(), (
+        f"Log mismatch in {golden_path.name}"
+    )

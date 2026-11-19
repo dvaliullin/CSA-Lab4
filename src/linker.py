@@ -52,10 +52,10 @@ class Linker:
                 word = int.from_bytes(image[patch_addr : patch_addr + 4], "little")
                 if reloc.rel_type in ("ABS16", "BRANCH16"):
                     word &= ~(0xFFFF << 2)
-                    word |= ((target_addr & 0xFFFF) << 2)
+                    word |= (target_addr & 0xFFFF) << 2
                 elif reloc.rel_type == "JUMP20":
                     word &= ~(0xFFFFF << 2)
-                    word |= ((target_addr & 0xFFFFF) << 2)
+                    word |= (target_addr & 0xFFFFF) << 2
 
                 image[patch_addr : patch_addr + 4] = word.to_bytes(4, "little")
 
