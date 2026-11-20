@@ -185,16 +185,16 @@
 ## Схема процессора и Control Unit
 
 ### DataPath
-![datapath_scheme](scheme\datapath.png)
+![datapath_scheme](scheme/datapath.png)
 
 ### Control Unit
-![cu_scheme](scheme\control_unit.png)
+![cu_scheme](scheme/control_unit.png)
 
 ### Scalar Register File
-![srf_scheme](scheme\scalar_rf.png)
+![srf_scheme](scheme/scalar_rf.png)
 
 ### Vector Register File
-![vrf_scheme](scheme\vector_rf.png)
+![vrf_scheme](scheme/vector_rf.png)
 
 ### Узлы и имена сигналов по схемам:
 * **Scalar DataPath:** `SRF` (`SRF_WE`, `REG_ADDR`, `SRF_WB`, `RS1_SEL`, `RS2_SEL`), `MUX_SRF`, `MUX_SALU`, `SALU` (`SALU_OP`, `SALU_OUT`), шины `RS1`, `RS2`, `IR_IMM`, `RDATA`, `WDATA`.
