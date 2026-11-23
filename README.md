@@ -554,8 +554,4 @@ python -m src.translator examples/hello.asm -o out/hello.o
 python -m src.translator examples/lib_io.asm -o out/lib_io.o
 python -m src.linker out/hello.o out/lib_io.o -o out/hello.bin
 python -m src.machine out/hello.bin
-```c.translator examples/hello.asm -o out/hello.o
-python -m src.translator examples/lib_io.asm -o out/lib_io.o
-python -m src.linker out/hello.o out/lib_io.o -o out/hello.bin
-python -m src.machine out/hello.bin
 ```
