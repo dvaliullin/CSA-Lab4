@@ -214,9 +214,6 @@
 ### Vector DataPath
 ![Vector DataPath](scheme/vector_datapath.png)
 
-### Memory
-![Memory](scheme/memory.png)
-
 ### Scalar Register File
 ![Scalar Register File](scheme/scalar_rf.png)
 
