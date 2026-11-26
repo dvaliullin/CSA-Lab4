@@ -21,8 +21,9 @@
 
 _start:
     li sp, STACK_TOP
-    li r14, 0                   # r14 = space_flag
-    li r15, 0                   # r15 = separate_digits_flag
+    li r18, STACK_TOP           # r18 = STACK_TOP
+    li r16, 0                   # r16 = space_flag
+    li r17, 0                   # r17 = separate_digits_flag
 
 token_loop:
     bl read_char
@@ -30,138 +31,135 @@ token_loop:
     beq flush_stack
     cmpwi r3, LF
     beq flush_stack
-    addi r6, r3, 0              # r6 = current_char
+    addi r19, r3, 0             # r19 = current_char
 
-    cmpwi r6, SPACE_CHAR
+    cmpwi r19, SPACE_CHAR
     beq token_space
 
-    cmpwi r6, ZERO_CHAR
+    cmpwi r19, ZERO_CHAR
     blt check_left
-    cmpwi r6, NINE_CHAR
+    cmpwi r19, NINE_CHAR
     bgt check_left
 
-    cmpwi r15, 0
+    cmpwi r17, 0
     bne print_digit
 
 separate_digits:
-    cmpwi r14, 0
+    cmpwi r16, 0
     beq print_digit
     li r3, SPACE_CHAR
     bl print_char
 
 print_digit:
-    li r14, 1
-    li r15, 1
-    addi r3, r6, 0
+    li r16, 1
+    li r17, 1
+    addi r3, r19, 0
     bl print_char
     b token_loop
 
 token_space:
-    li r15, 0
+    li r17, 0
     b token_loop
 
 check_left:
-    cmpwi r6, LEFT_PAREN
+    cmpwi r19, LEFT_PAREN
     bne check_right
-    li r15, 0
+    li r17, 0
     subi sp, sp, 4
-    stw r6, 0(sp)
+    stw r19, 0(sp)
     b token_loop
 
 check_right:
-    cmpwi r6, RIGHT_PAREN
+    cmpwi r19, RIGHT_PAREN
     bne handle_operator
-    li r15, 0
+    li r17, 0
 
 pop_right:
-    li r10, STACK_TOP
-    cmpw sp, r10
+    cmpw sp, r18
     bge token_loop
-    lwz r9, 0(sp)
+    lwz r20, 0(sp)
     addi sp, sp, 4
-    cmpwi r9, LEFT_PAREN
+    cmpwi r20, LEFT_PAREN
     beq token_loop
 
-    cmpwi r14, 0
+    cmpwi r16, 0
     beq print_right_op
     li r3, SPACE_CHAR
     bl print_char
 
 print_right_op:
-    li r14, 1
-    addi r3, r9, 0
+    li r16, 1
+    addi r3, r20, 0
     bl print_char
     b pop_right
 
 handle_operator:
-    li r15, 0
-    li r11, 1                   # r11 = current_prio (1 for +,-; 2 for *,/)
-    cmpwi r6, MUL_CHAR
+    li r17, 0
+    li r21, 1                   # r21 = current_prio (1 for +,-; 2 for *,/)
+    cmpwi r19, MUL_CHAR
     beq priority_two
-    cmpwi r6, DIV_CHAR
+    cmpwi r19, DIV_CHAR
     beq priority_two
     b stack_priority
 
 priority_two:
-    li r11, 2
+    li r21, 2
 
 stack_priority:
-    li r10, STACK_TOP
-    cmpw sp, r10
+    cmpw sp, r18
     bge push_operator
-    lwz r9, 0(sp)
-    cmpwi r9, LEFT_PAREN
+    lwz r20, 0(sp)
+    cmpwi r20, LEFT_PAREN
     beq push_operator
 
-    li r13, 1                   # r13 = stack_top_prio
-    cmpwi r9, MUL_CHAR
+    li r22, 1                   # r22 = stack_top_prio
+    cmpwi r20, MUL_CHAR
     beq top_priority_two
-    cmpwi r9, DIV_CHAR
+    cmpwi r20, DIV_CHAR
     beq top_priority_two
     b compare_priority
 
 top_priority_two:
-    li r13, 2
+    li r22, 2
 
 compare_priority:
-    cmpw r13, r11
+    cmpw r22, r21
     blt push_operator
 
-    lwz r9, 0(sp)
+    lwz r20, 0(sp)
     addi sp, sp, 4
-    cmpwi r14, 0
+    cmpwi r16, 0
     beq print_operator
     li r3, SPACE_CHAR
     bl print_char
 
 print_operator:
-    li r14, 1
-    addi r3, r9, 0
+    li r16, 1
+    addi r3, r20, 0
     bl print_char
     b stack_priority
 
 push_operator:
     subi sp, sp, 4
-    stw r6, 0(sp)
+    stw r19, 0(sp)
     b token_loop
 
 flush_stack:
-    li r10, STACK_TOP
-    cmpw sp, r10
+    cmpw sp, r18
     bge exit
-    lwz r9, 0(sp)
+    lwz r20, 0(sp)
     addi sp, sp, 4
-    cmpwi r9, LEFT_PAREN
+    cmpwi r20, LEFT_PAREN
     beq flush_stack
 
-    cmpwi r14, 0
+    cmpwi r16, 0
     beq print_flush
     li r3, SPACE_CHAR
     bl print_char
 
 print_flush:
-    li r14, 1
-    addi r3, r9, 0
+    li r16, 1
+    addi r3, r20, 0
     bl print_char
     b flush_stack
 

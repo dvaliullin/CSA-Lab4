@@ -24,8 +24,10 @@
 # Функция вывода pstr, принимает адрес строки в r3
 print_pstr:
     mflr r12
-    addi sp, sp, -4
+    addi sp, sp, -12
     stw r12, 0(sp)
+    stw r4, 4(sp)
+    stw r5, 8(sp)
     lbz r4, 0(r3)               # r4 = pstr_length
     addi r5, r3, 1              # r5 = pstr_char_ptr
 
@@ -39,24 +41,22 @@ print_pstr_loop:
     b print_pstr_loop
 
 print_pstr_done:
+    lwz r5, 8(sp)
+    lwz r4, 4(sp)
     lwz r12, 0(sp)
-    addi sp, sp, 4
+    addi sp, sp, 12
     mtlr r12
     blr                         # return
 
 # Функция вывода одного символа, принимает код символа в r3
 print_char:
-    mflr r12
-    addi sp, sp, -8
-    stw r12, 0(sp)
-    stw r7, 4(sp)
+    addi sp, sp, -4
+    stw r7, 0(sp)
     lis r7, @h(OUTPUT_ADDR)
     addi r7, r7, @l(OUTPUT_ADDR)
     stw r3, 0(r7)
-    lwz r7, 4(sp)
-    lwz r12, 0(sp)
-    addi sp, sp, 8
-    mtlr r12
+    lwz r7, 0(sp)
+    addi sp, sp, 4
     blr
 
 # Функция вывода целого неотрицательного числа из r3
@@ -125,25 +125,26 @@ print_newline:
 
 # Функция чтения одного символа из потока ввода, возвращает прочитанный байт в r3
 read_char:
-    mflr r12
     addi sp, sp, -4
-    stw r12, 0(sp)
+    stw r7, 0(sp)
     lis r7, @h(INPUT_ADDR)
     addi r7, r7, @l(INPUT_ADDR)
     lwz r3, 0(r7)
-    lwz r12, 0(sp)
+    lwz r7, 0(sp)
     addi sp, sp, 4
-    mtlr r12
     blr
 
 # Функция чтения строки из потока ввода, принимает адрес буфера для записи строки в r3
 read_pstr:
     mflr r12
-    addi sp, sp, -4
+    addi sp, sp, -16
     stw r12, 0(sp)
-    addi r6, r3, 0            # r6 = pstr_addr
-    addi r5, r3, 1            # r5 = pstr_char_ptr
-    li r4, 0                  # r4 = pstr_length
+    stw r4, 4(sp)
+    stw r5, 8(sp)
+    stw r6, 12(sp)
+    addi r6, r3, 0              # r6 = pstr_addr
+    addi r5, r3, 1              # r5 = pstr_char_ptr
+    li r4, 0                    # r4 = pstr_length
 
 read_pstr_loop:
     bl read_char
@@ -158,8 +159,11 @@ read_pstr_loop:
 
 read_pstr_done:
     stb r4, 0(r6)
+    lwz r6, 12(sp)
+    lwz r5, 8(sp)
+    lwz r4, 4(sp)
     lwz r12, 0(sp)
-    addi sp, sp, 4
+    addi sp, sp, 16
     mtlr r12
     blr
 

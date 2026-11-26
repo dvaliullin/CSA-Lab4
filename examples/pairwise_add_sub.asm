@@ -18,79 +18,75 @@ vec_sub: .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 _start:
     bl read_int
-    addi r6, r3, 0              # r6 = N (pairs_count)
-    li r10, 0                   # r10 = pair_index
-    li r11, 0                   # r11 = input_offset
+    addi r16, r3, 0             # r16 = N (pairs_count)
+    li r17, 0                   # r17 = pair_index
+    li r18, 0                   # r18 = input_offset
+    li r19, vec_a               # r19 = &vec_a
+    li r20, vec_b               # r20 = &vec_b
+    li r21, vec_add             # r21 = &vec_add
+    li r22, vec_sub             # r22 = &vec_sub
 
 read_pair_loop:
-    cmpw r10, r6
+    cmpw r17, r16
     bge calculate
 
     bl read_int
-    li r13, vec_a
-    add r13, r13, r11
-    stw r3, 0(r13)
+    add r4, r19, r18
+    stw r3, 0(r4)
 
     bl read_int
-    li r13, vec_b
-    add r13, r13, r11
-    stw r3, 0(r13)
+    add r4, r20, r18
+    stw r3, 0(r4)
 
-    addi r11, r11, 4
-    addi r10, r10, 1
+    addi r18, r18, 4
+    addi r17, r17, 1
     b read_pair_loop
 
 calculate:
-    li r10, 0
-    li r11, 0
-    
+    li r17, 0
+    li r18, 0
+
 calculate_loop:
-    cmpw r10, r6
+    cmpw r17, r16
     bge print_results
 
-    li r13, vec_a
-    add r13, r13, r11
-    lvx v0, 0(r13)
-    li r13, vec_b
-    add r13, r13, r11
-    lvx v1, 0(r13)
+    add r4, r19, r18
+    lvx v0, 0(r4)
+    add r4, r20, r18
+    lvx v1, 0(r4)
     vadduwm v2, v0, v1
     vsubuwm v3, v0, v1
 
-    li r13, vec_add
-    add r13, r13, r11
-    stvx v2, 0(r13)
-    li r13, vec_sub
-    add r13, r13, r11
-    stvx v3, 0(r13)
-    addi r10, r10, 4
-    addi r11, r11, 16
+    add r4, r21, r18
+    stvx v2, 0(r4)
+    add r4, r22, r18
+    stvx v3, 0(r4)
+
+    addi r17, r17, 4
+    addi r18, r18, 16
     b calculate_loop
 
 print_results:
-    li r14, 0                   # r14 = pair_index
-    subi r15, r6, 1             # r15 = N - 1 (last pair index)
+    li r17, 0                   # r17 = pair_index
 
 print_loop:
-    cmpw r14, r6
+    cmpw r17, r16
     bge exit
 
-    slwi r13, r14, 2
-    li r9, vec_add
-    add r9, r9, r13
-    lwz r3, 0(r9)
+    slwi r23, r17, 2
+    add r4, r21, r23
+    lwz r3, 0(r4)
     bl print_signed
 
     li r3, SPACE_CHAR
     bl print_char
 
-    li r9, vec_sub
-    add r9, r9, r13
-    lwz r3, 0(r9)
+    add r4, r22, r23
+    lwz r3, 0(r4)
     bl print_signed
 
-    addi r14, r14, 1
-    cmpw r14, r6
+    addi r17, r17, 1
+    cmpw r17, r16
     bge print_done
     li r3, SPACE_CHAR
     bl print_char
