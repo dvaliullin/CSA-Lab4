@@ -1,26 +1,35 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
 
 from src.isa import DecodedInstruction, Opcode, decode_instruction
 from src.machine.datapath import DataPath
 from src.microcode import (
-    DestReg,
-    MemReadDest,
-    MicroCond,
+    ArSel,
+    CondSel,
     MicroInstruction,
-    SrcA,
-    SrcB,
+    SeqOp,
+    WDataSelect,
     build_control_store,
 )
 
 logger = logging.getLogger("machine")
 
 
+class MapROM:
+    MAP_ADDR = "MAP_ADDR"
+
+    def __init__(self, dispatch_table: dict[int, int]) -> None:
+        self.dispatch_table = dispatch_table
+
+    def lookup(self, opcode: Opcode) -> int:
+        return self.dispatch_table.get(opcode.value, 0)
+
+
 class InstructionDecoder:
     OPCODE = "Opcode"
-    REG_ADDR = "REG_ADDR"
+    SR_ADDR = "SR_ADDR"
+    VR_ADDR = "VR_ADDR"
     IR_IMM = "IR_IMM"
 
     @staticmethod
@@ -46,15 +55,17 @@ class MPCIncrementer:
 
 
 class MuxMPC:
-    def select(self, seq_op: MicroCond, next_maddr: int, mapped: int, mpc_inc: int, flag: int) -> int:
-        if seq_op is MicroCond.NEXT:
+    def select(self, seq_op: SeqOp, next_maddr: int, mapped: int, mpc_inc: int, flag_status: bool) -> int:
+        if seq_op is SeqOp.NEXT_MADDR:
             return next_maddr
-        if seq_op is MicroCond.DISPATCH:
+        if seq_op is SeqOp.MPC_INC:
+            return mpc_inc
+        if seq_op is SeqOp.MAP_ADDR:
             return mapped
-        if seq_op is MicroCond.COND_BRANCH:
-            return flag
-        if seq_op is MicroCond.FETCH:
+        if seq_op is SeqOp.FETCH0:
             return 0
+        if seq_op is SeqOp.FLAG_STATUS:
+            return next_maddr if flag_status else mpc_inc
         return mpc_inc
 
 
@@ -62,20 +73,24 @@ class MuxCond:
     COND_SEL = "COND_SEL"
 
     @staticmethod
-    def select(condition: int, z: int, n: int, vcnt_done: bool = False) -> bool:
-        if condition == 0:
+    def select(cond_sel: CondSel, z: int, n: int, vcnt_done: bool) -> bool:
+        if cond_sel is CondSel.UNCOND:
+            return True
+        if cond_sel is CondSel.VCNT_LOOP:
+            return not vcnt_done
+        if cond_sel is CondSel.EQ:
             return z == 1
-        if condition == 1:
+        if cond_sel is CondSel.NE:
             return z == 0
-        if condition == 2:
+        if cond_sel is CondSel.LT:
             return n == 1
-        if condition == 3:
+        if cond_sel is CondSel.GE:
             return n == 0
-        if condition == 4:
+        if cond_sel is CondSel.LE:
             return n == 1 or z == 1
-        if condition == 5:
+        if cond_sel is CondSel.GT:
             return n == 0 and z == 0
-        return vcnt_done
+        return False
 
 
 class ControlUnit:
@@ -83,6 +98,7 @@ class ControlUnit:
         self.dp: DataPath = datapath
         self.control_store, self.dispatch_table = build_control_store()
         self.rom = MicroProgramROM(self.control_store)
+        self.map_rom = MapROM(self.dispatch_table)
         self.instruction_decoder = InstructionDecoder()
         self.mpc_inc = MPCIncrementer()
         self.mux_mpc = MuxMPC()
@@ -106,6 +122,10 @@ class ControlUnit:
         return self.rom
 
     @property
+    def MAP_ROM(self) -> MapROM:
+        return self.map_rom
+
+    @property
     def MUX_MPC(self) -> MuxMPC:
         return self.mux_mpc
 
@@ -117,145 +137,137 @@ class ControlUnit:
         if self.halted:
             return
 
-        # Чтение микрокоманды в MIR (Microinstruction Register)
+        # 1. Чтение микрокоманды из ROM в MIR
         self.mir = self.rom.read(self.mpc)
         mir = self.mir
         self.tick_count += 1
+
+        if mir.HALT_EN:
+            self.halted = True
+            logger.info("HALT: instruction TRAP executed at PC=%08X (ticks: %d)", self.dp.pc, self.tick_count)
+            final_str = "".join(chr(b) for b in self.dp.mem.io_output_buffer)
+            logger.info("output_buffer: %r", final_str)
+            return
+
+        # 2. Декодирование IR и выборка из SRF
         decoded = self.instruction_decoder.decode(self.dp.IR)
         self.dp.ir_imm = decoded.imm
+        flag_status = self.mux_cond.select(mir.COND_SEL, self.dp.flag_z, self.dp.flag_n, self.dp.VCNT_DONE)
 
-        op_a = 0
-        if mir.src_a == SrcA.PC:
-            op_a = self.dp.pc
-        elif mir.src_a == SrcA.RS1:
-            op_a = self.dp.srf.read_port_1(decoded.rs1)
-        elif mir.src_a == SrcA.MAR:
-            op_a = self.dp.ar
-        elif mir.src_a == SrcA.IMM:
-            op_a = decoded.imm
-        elif mir.src_a == SrcA.SP:
-            op_a = self.dp.srf.read_port_1(1)
-        elif mir.src_a == SrcA.LR:
-            op_a = self.dp.lr
-        elif mir.src_a == SrcA.RD:
-            op_a = self.dp.srf.read_port_1(decoded.rd)
+        rs1_val = self.dp.srf.read_port_1(decoded.rs1)
+        rs2_sel = decoded.rd if (mir.MEM_WRITE and mir.WDATA_SEL is WDataSelect.STB_STW_DATA) else decoded.rs2
+        rs2_val = self.dp.srf.read_port_2(rs2_sel)
 
-        op_b = 0
-        if mir.src_b == SrcB.RS2:
-            op_b = self.dp.srf.read_port_2(decoded.rs2)
-        elif mir.src_b == SrcB.IMM:
-            op_b = decoded.imm
-        elif mir.src_b == SrcB.CONST_4:
-            op_b = 4
-
-        self.dp.rs1 = cast(int, self.dp.mux_salu.select(op_a))
-        self.dp.rs2 = cast(int, self.dp.mux_salu.select(op_b))
+        # 3. SALU
+        self.dp.rs1 = self.dp.select_salu_a(mir.SALU_A_SEL, rs1_val)
+        self.dp.rs2 = self.dp.select_salu_b(mir.SALU_B_SEL, rs2_val)
 
         res, new_z, new_n = self.dp.salu.execute(self.dp.rs1, self.dp.rs2, mir.SALU_OP)
-        if mir.src_a == SrcA.PC and mir.src_b == SrcB.CONST_4:
-            res = self.dp.pc_inc.add(self.dp.PC)
         self.dp.salu_out = res
-        if new_z is not None:
-            self.dp.flag_z = new_z
-        if new_n is not None:
-            self.dp.flag_n = new_n
+        self.dp.data_addr = res
+        self.dp.branch_target = res & 0xFFFFFFFF
 
-        if mir.vcnt_reset:
-            self.dp.vcnt = 0
+        if mir.FLAGS_WE:
+            if new_z is not None:
+                self.dp.flag_z = new_z
+            if new_n is not None:
+                self.dp.flag_n = new_n
 
-        # Запись в регистры
-        if mir.dest == DestReg.MAR:
-            self.dp.data_addr = cast(int, self.dp.mux_ar.select(res))
-            self.dp.AR = self.dp.data_addr
-        elif mir.dest == DestReg.PC:
-            self.dp.branch_target = cast(int, self.dp.mux_pc.select(res))
-            self.dp.PC = self.dp.branch_target
-        elif mir.dest == DestReg.LR:
-            self.dp.lr = cast(int, self.dp.mux_lr.select(res)) & 0xFFFF
-        elif mir.dest == DestReg.RD:
-            srf_wb = cast(int, self.dp.mux_srf.select(res))
-            self.dp.srf.write_back(decoded.rd, srf_wb, decoded.rd != 0)
+        # 4. AR (для LVX/STVX: на vcnt==0 -> DATA_ADDR, иначе -> AR + 4 от AR_INC) и чтение памяти
+        if mir.AR_EN:
+            ar_sel = mir.AR_SEL
+            if mir.VALU_OP in ("VLD", "VST"):
+                ar_sel = ArSel.DATA_ADDR if self.dp.vcnt == 0 else ArSel.AR_PLUS_4
+            self.dp.AR = self.dp.select_ar_in(ar_sel)
 
-        # Векторные операции (VALU и Splitter/Packer)
-        if mir.vec_op in ("VADD", "VSUB", "VMUL", "VDIV", "VCMP"):
+        if mir.MEM_READ:
+            self.dp.rdata = self.dp.mem.read(self.dp.ar, mem_size=mir.MEM_SIZE)
+            if mir.IR_EN:
+                self.dp.IR = self.dp.rdata
+
+        # 5. Vector DataPath (VALU / Splitter / Packer) и запись памяти
+        if mir.VALU_OP in ("VADD", "VSUB", "VMUL", "VDIV", "VCMP"):
             v1 = self.dp.vrf.read_port_1(decoded.vs1)
             v2 = self.dp.vrf.read_port_2(decoded.vs2)
-            v_res = self.dp.valu.execute(v1, v2, mir.VALU_OP)
-            self.dp.valu_out = v_res
-            self.dp.vrf.write_back(decoded.vd, cast(list[int], self.dp.mux_vrf.select(v_res)), True)
-        elif mir.vec_op == "VLD":
-            lane = self.dp.vcnt
-            self.dp.rdata = self.dp.mem.read(self.dp.ar, byte=False)
-            self.dp.vrf.write_lane(decoded.vd, lane, self.dp.rdata)
-        elif mir.vec_op == "VST":
-            lane = self.dp.vcnt
-            self.dp.wdata = self.dp.vrf.read_lane(decoded.vd, lane)
-            self.dp.mem.write(self.dp.ar, self.dp.wdata, byte=False)
+            self.dp.valu_out = self.dp.valu.execute(v1, v2, mir.VALU_OP)
+        elif mir.VALU_OP == "VLD":
+            self.dp.packed_data = self.dp.packer.pack(self.dp.vcnt, self.dp.rdata)
+        elif mir.VALU_OP == "VST":
+            vrs1 = self.dp.vrf.read_port_1(decoded.vd)
+            self.dp.splitted_data = self.dp.splitter.split(vrs1, self.dp.vcnt)
 
-        if mir.vcnt_enable:
+        if mir.VRF_WE:
+            vrf_wb = self.dp.select_vrf_wb(mir.VRF_SEL)
+            self.dp.vrf.write_back(decoded.vd, vrf_wb, True)
+
+        if mir.MEM_WRITE:
+            if mir.WDATA_SEL is WDataSelect.SPLITTED_DATA:
+                self.dp.wdata = self.dp.splitted_data
+                self.dp.mem.write(
+                    self.dp.ar,
+                    0,
+                    mem_size=mir.MEM_SIZE,
+                    wdata_sel=WDataSelect.SPLITTED_DATA,
+                    splitted_data=self.dp.splitted_data,
+                )
+            else:
+                self.dp.wdata = rs2_val
+                self.dp.mem.write(
+                    self.dp.ar,
+                    rs2_val,
+                    mem_size=mir.MEM_SIZE,
+                    wdata_sel=WDataSelect.STB_STW_DATA,
+                )
+
+        # 6. Обновление регистров по фронту такта
+        if mir.VCNT_RST:
+            self.dp.vcnt = 0
+            self.dp.packer.reset()
+        elif mir.VCNT_EN:
             self.dp.vcnt = (self.dp.vcnt + 1) & 0x03
 
-        # Обращение к памяти
-        if mir.mem_read:
-            read_data = self.dp.mem.read(self.dp.ar, byte=mir.mem_byte)
-            if mir.mem_read_dest == MemReadDest.IR:
-                self.dp.IR = read_data
-            elif mir.mem_read_dest == MemReadDest.RD:
-                self.dp.rdata = read_data
-                self.dp.srf.write_back(decoded.rd, cast(int, self.dp.mux_srf.select(self.dp.rdata)), decoded.rd != 0)
+        if mir.SRF_WE:
+            srf_wb = self.dp.select_srf_wb(mir.SRF_SEL)
+            self.dp.srf.write_back(decoded.rd, srf_wb, True)
 
-        if mir.mem_write and mir.mem_write_src == SrcA.RD:
-            self.dp.wdata = self.dp.srf.read_port_1(decoded.rd)
-            self.dp.mem.write(self.dp.ar, self.dp.wdata, byte=mir.mem_byte)
+        if mir.LR_EN:
+            self.dp.LR = self.dp.select_lr_in(mir.LR_SEL, rs1_val)
 
-        # Логирование текущего состояния процессора
-        register_values = f"[{' '.join(str(value) for value in self.dp.srf.get_all())}]"
-        vector_values = (
-            "["
-            + " ".join("[" + " ".join(str(value) for value in vector) + "]" for vector in self.dp.vrf.get_all())
-            + "]"
+        if mir.PC_EN:
+            self.dp.PC = self.dp.select_pc_in(mir.PC_SEL)
+
+        # 7. Логирование состояния
+        log_decoded = self.instruction_decoder.decode(self.dp.IR) if mir.IR_EN else decoded
+        non_zero_regs = " ".join(f"r{idx}={val:X}" for idx, val in enumerate(self.dp.srf.get_all()) if val != 0)
+        non_zero_vecs = " ".join(
+            f"v{idx}=[{' '.join(f'{lane:X}' for lane in vec)}]"
+            for idx, vec in enumerate(self.dp.vrf.get_all())
+            if any(lane != 0 for lane in vec)
         )
         logger.debug(
-            "TICK: %4d MPC: %3d PC: %04X IR: %08X AR: %08X LR: %04X %-10s Z: %d N: %d R: %s V: %s",
+            "TICK: %4d MPC: %02X PC: %08X IR: %08X AR: %08X LR: %08X %-10s Z: %d N: %d R: {%s} V: {%s}",
             self.tick_count,
             self.mpc,
             self.dp.pc,
             self.dp.ir,
             self.dp.ar,
             self.dp.lr,
-            f"[{decoded.opcode.name}]",
+            f"[{log_decoded.opcode.name}]",
             self.dp.flag_z,
             self.dp.flag_n,
-            register_values,
-            vector_values,
+            non_zero_regs,
+            non_zero_vecs,
         )
 
-        # Мультиплексор следующего адреса микрокоманды (MUX_MPC / MUX_COND)
-        if mir.ucond == MicroCond.NEXT:
-            self.mpc = mir.next_uaddr
-        elif mir.ucond == MicroCond.DISPATCH:
-            if decoded.opcode == Opcode.TRAP:
-                self.halted = True
-                logger.info("HALT: instruction TRAP executed at PC=%04X (ticks: %d)", self.dp.pc, self.tick_count)
-                final_str = "".join(chr(b) for b in self.dp.mem.io_output_buffer)
-                logger.info("output_buffer: %r", final_str)
-                return
-            self.mpc = self.mux_mpc.select(
-                MicroCond.DISPATCH,
-                mir.next_uaddr,
-                self.dispatch_table.get(decoded.opcode.value, 0),
-                self.mpc_inc.increment(self.mpc),
-                0,
-            )
+        # 8. Выбор следующего адреса микропрограммы (MUX_MPC)
+        mapped = self.map_rom.lookup(log_decoded.opcode)
+        if mir.SEQ_OP is SeqOp.MAP_ADDR and log_decoded.opcode is not Opcode.TRAP:
             self.instruction_count += 1
-        elif mir.ucond == MicroCond.COND_BRANCH:
-            take = self.mux_cond.select(decoded.cond, self.dp.flag_z, self.dp.flag_n, self.dp.VCNT_DONE)
 
-            if take:
-                self.dp.branch_target = res & 0xFFFF
-                self.dp.pc = cast(int, self.dp.mux_pc.select(self.dp.branch_target))
-            self.mpc = self.mux_mpc.select(
-                MicroCond.COND_BRANCH, mir.next_uaddr, 0, self.mpc_inc.increment(self.mpc), 0
-            )
-        elif mir.ucond == MicroCond.FETCH:
-            self.mpc = self.mux_mpc.select(MicroCond.FETCH, mir.next_uaddr, 0, self.mpc_inc.increment(self.mpc), 0)
+        self.mpc = self.mux_mpc.select(
+            mir.SEQ_OP,
+            mir.NEXT_MADDR,
+            mapped,
+            self.mpc_inc.increment(self.mpc),
+            flag_status,
+        )

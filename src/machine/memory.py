@@ -5,6 +5,7 @@ from enum import Enum
 from typing import overload
 
 from src.isa import MEM_SIZE, STDIN_DATA, STDOUT_DATA
+from src.microcode import MemSize, WDataSelect
 
 logger = logging.getLogger("machine")
 
@@ -68,19 +69,23 @@ class MemoryTarget(Enum):
     STDOUT_DATA = "STDOUT_DATA"
 
 
-class AddressDecoder:
-    ADDR = "ADDR"
+class MemoryAddressDecoder:
+    MEM_ADDR = "MEM_ADDR"
     MEM_READ = "MEM_READ"
     MEM_WRITE = "MEM_WRITE"
+    MEM_SEL = "MEM_SEL"
 
     @staticmethod
-    def decode(addr: int) -> MemoryTarget:
-        clean_addr = addr & 0xFFFFFFFF
+    def decode(mem_addr: int) -> MemoryTarget:
+        clean_addr = mem_addr & 0xFFFFFFFF
         if clean_addr == STDIN_DATA:
             return MemoryTarget.STDIN_DATA
         if clean_addr == STDOUT_DATA:
             return MemoryTarget.STDOUT_DATA
         return MemoryTarget.RAM
+
+
+AddressDecoder = MemoryAddressDecoder
 
 
 class ByteAligner:
@@ -94,13 +99,21 @@ class ByteAligner:
     def byte_address(addr: int) -> int:
         return addr & 0xFFFFFFFF
 
+    @staticmethod
+    def align_read(raw_word: int, mem_size: MemSize) -> int:
+        return (raw_word & 0xFF) if mem_size is MemSize.BYTE else (raw_word & 0xFFFFFFFF)
+
+    @staticmethod
+    def align_write_scalar(wdata: int, mem_size: MemSize) -> int:
+        return (wdata & 0xFF) if mem_size is MemSize.BYTE else (wdata & 0xFFFFFFFF)
+
 
 class MuxWData:
     WDATA_SEL = "WDATA_SEL"
 
     @staticmethod
-    def select(stb_stw_data: int, split_data: int, byte: bool) -> int:
-        return stb_stw_data if byte else split_data
+    def select(stb_stw_data: int, splitted_data: int, wdata_sel: WDataSelect) -> int:
+        return stb_stw_data if wdata_sel is WDataSelect.STB_STW_DATA else (splitted_data & 0xFFFFFFFF)
 
 
 class Memory:
@@ -112,52 +125,65 @@ class Memory:
         self.raw_mem = SparseMemory(size)
         self.io_input_buffer = []
         self.io_output_buffer = []
-        self.address_decoder = AddressDecoder()
+        self.address_decoder = MemoryAddressDecoder()
         self.byte_aligner = ByteAligner()
         self.mux_wdata = MuxWData()
         self.addr = 0
         self.rdata = 0
         self.wdata = 0
+        self.mem_sel: MemoryTarget = MemoryTarget.RAM
 
-    def read(self, addr: int, byte: bool = False) -> int:
+    def read(self, addr: int, byte: bool = False, mem_size: MemSize | None = None) -> int:
+        size = mem_size if mem_size is not None else (MemSize.BYTE if byte else MemSize.WORD)
         self.addr = addr & 0xFFFFFFFF
-        clean_addr = addr & 0xFFFFFFFF
-        target = self.address_decoder.decode(clean_addr)
-        if target is MemoryTarget.STDIN_DATA:
+        self.mem_sel = self.address_decoder.decode(self.addr)
+
+        if self.mem_sel is MemoryTarget.STDIN_DATA:
             if self.io_input_buffer:
                 val = self.io_input_buffer.pop(0)
                 char_repr = chr(val) if 32 <= val <= 126 else f"\\x{val:02x}"
-                logger.debug("INPUT:  '%s' (%d) from port 0x%08X", char_repr, val, clean_addr)
+                logger.debug("INPUT:  '%s' (%d) from port 0x%08X", char_repr, val, self.addr)
                 self.rdata = val
                 return self.rdata
-            logger.debug("INPUT:  EOF (-1) from port 0x%08X", clean_addr)
+            logger.debug("INPUT:  EOF (-1) from port 0x%08X", self.addr)
             self.rdata = 0xFFFFFFFF
             return self.rdata
 
-        ram_addr = self.byte_aligner.byte_address(clean_addr)
-        if byte:
-            self.rdata = self.raw_mem[ram_addr]
-            return self.rdata
-        aligned = self.byte_aligner.word_address(ram_addr)
-        self.rdata = int.from_bytes(self.raw_mem[aligned : aligned + 4], "little", signed=False)
+        if size is MemSize.BYTE:
+            raw_val = self.raw_mem[self.byte_aligner.byte_address(self.addr)]
+        else:
+            aligned = self.byte_aligner.word_address(self.addr)
+            raw_val = int.from_bytes(self.raw_mem[aligned : aligned + 4], "little", signed=False)
+        self.rdata = self.byte_aligner.align_read(raw_val, size)
         return self.rdata
 
-    def write(self, addr: int, val: int, byte: bool = False) -> None:
+    def write(
+        self,
+        addr: int,
+        val: int,
+        byte: bool = False,
+        mem_size: MemSize | None = None,
+        wdata_sel: WDataSelect = WDataSelect.STB_STW_DATA,
+        splitted_data: int = 0,
+    ) -> None:
+        size = mem_size if mem_size is not None else (MemSize.BYTE if byte else MemSize.WORD)
         self.addr = addr & 0xFFFFFFFF
-        self.wdata = self.mux_wdata.select(val & 0xFF, val, byte)
-        clean_addr = addr & 0xFFFFFFFF
-        target = self.address_decoder.decode(clean_addr)
-        if target is MemoryTarget.STDOUT_DATA:
-            b_val = val & 0xFF
+        self.mem_sel = self.address_decoder.decode(self.addr)
+
+        stb_stw_data = self.byte_aligner.align_write_scalar(val, size)
+        src_split = splitted_data if wdata_sel is WDataSelect.SPLITTED_DATA else val
+        self.wdata = self.mux_wdata.select(stb_stw_data, src_split, wdata_sel)
+
+        if self.mem_sel is MemoryTarget.STDOUT_DATA:
+            b_val = self.wdata & 0xFF
             self.io_output_buffer.append(b_val)
             char_repr = chr(b_val) if 32 <= b_val <= 126 else f"\\x{b_val:02x}"
             curr_out = "".join(chr(b) if 32 <= b <= 126 else "." for b in self.io_output_buffer)
-            logger.debug("OUTPUT: '%s' (%d) to port 0x%08X | buffer: '%s'", char_repr, b_val, clean_addr, curr_out)
+            logger.debug("OUTPUT: '%s' (%d) to port 0x%08X | buffer: '%s'", char_repr, b_val, self.addr, curr_out)
             return
 
-        ram_addr = self.byte_aligner.byte_address(clean_addr)
-        if byte:
-            self.raw_mem[ram_addr] = self.wdata
+        if size is MemSize.BYTE:
+            self.raw_mem[self.byte_aligner.byte_address(self.addr)] = self.wdata & 0xFF
         else:
-            aligned = self.byte_aligner.word_address(ram_addr)
+            aligned = self.byte_aligner.word_address(self.addr)
             self.raw_mem[aligned : aligned + 4] = (self.wdata & 0xFFFFFFFF).to_bytes(4, "little")
