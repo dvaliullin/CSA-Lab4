@@ -1,5 +1,3 @@
-"""Instruction Set Architecture with MMIO at 0xFFFF0000-0xFFFF0007."""
-
 from __future__ import annotations
 
 from enum import IntEnum
@@ -8,7 +6,6 @@ from typing import NamedTuple
 MEM_SIZE: int = 4294967296  # 4 GiB
 STACK_TOP: int = 0xFFFFFFFF
 
-# Адреса портов ввода-вывода в диапазоне FFFF_0000 - FFFF_0007
 STDIN_DATA: int = 0xFFFF0000
 STDOUT_DATA: int = 0xFFFF0004
 DEFAULT_BASE: int = 0x0000
@@ -71,7 +68,7 @@ class Opcode(IntEnum):
 
 
 PPC_REGISTERS: dict[str, int] = {f"r{i}": i for i in range(32)}
-PPC_REGISTERS.update({"sp": 1, "rtoc": 2})
+PPC_REGISTERS.update({"sp": 1})
 
 ALTIVEC_REGISTERS: dict[str, int] = {f"v{i}": i for i in range(32)}
 
@@ -88,22 +85,35 @@ class DecodedInstruction(NamedTuple):
     vs2: int
 
 
+_JUMP_BRANCH_OPCODES = (
+    Opcode.BEQ,
+    Opcode.BNE,
+    Opcode.BLT,
+    Opcode.BGE,
+    Opcode.BLE,
+    Opcode.BGT,
+    Opcode.B,
+    Opcode.BL,
+)
+
+
 def decode_instruction(word: int) -> DecodedInstruction:
     op_val = (word >> 26) & 0x3F
     opcode = Opcode(op_val) if op_val in Opcode._value2member_map_ else Opcode.NOP
 
-    rd = (word >> 22) & 0x0F
-    rs1 = (word >> 18) & 0x0F
-    rs2 = (word >> 14) & 0x0F
+    rd = (word >> 21) & 0x1F
+    rs1 = (word >> 16) & 0x1F
+    rs2 = (word >> 11) & 0x1F
 
-    raw_imm16 = (word >> 2) & 0xFFFF
+    raw_imm16 = word & 0xFFFF
     imm16 = raw_imm16 - 0x10000 if raw_imm16 & 0x8000 else raw_imm16
-    target20 = (word >> 2) & 0xFFFFF
-    cond = (word >> 22) & 0x0F
 
-    vd = (word >> 23) & 0x07
-    vs1 = (word >> 20) & 0x07
-    vs2 = (word >> 17) & 0x07
+    raw_off26 = word & 0x3FFFFFF
+    off26 = raw_off26 - 0x4000000 if raw_off26 & 0x2000000 else raw_off26
 
-    final_imm = target20 if opcode in (Opcode.B, Opcode.BL) else imm16
-    return DecodedInstruction(opcode, rd, rs1, rs2, final_imm, cond, vd, vs1, vs2)
+    vd = (word >> 21) & 0x1F
+    vs1 = (word >> 16) & 0x1F
+    vs2 = (word >> 11) & 0x1F
+
+    final_imm = (off26 << 2) if opcode in _JUMP_BRANCH_OPCODES else imm16
+    return DecodedInstruction(opcode, rd, rs1, rs2, final_imm, 0, vd, vs1, vs2)
