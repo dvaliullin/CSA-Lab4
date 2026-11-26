@@ -80,10 +80,11 @@
 * **Векторный регистровый файл (AltiVec / VMX):** 32 регистра (`v0`–`v31`) по 128 бит:
   * Каждый векторный регистр разбит на **4 дорожки (lanes) по 32 бита** (SIMD $4 \times 32$).
 * **Служебные регистры:**
-* `PC` (Program Counter) — 32 бита.
-* `AR` (Address Register) — 32 бита.
-* `IR` (Instruction Register) — 32 бита.
-* `LR` (Link Register) — 32 бита, независимый регистр связи для возврата из подпрограмм. Заполняется командой `bl` (`LR = PC + 4`), восстанавливается в `PC` командой `blr`. Перенос в скалярные регистры и обратно осуществляется инструкциями `mflr` и `mtlr`.
+  * `PC` (Program Counter) — 32 бита.
+  * `AR` (Address Register) — 32 бита.
+  * `IR` (Instruction Register) — 32 бита.
+  * `LR` (Link Register) — 32 бита, независимый регистр связи для возврата из подпрограмм. Заполняется командой `bl` (`LR = PC + 4`), восстанавливается в `PC` командой `blr`. Перенос в скалярные регистры и обратно осуществляется инструкциями `mflr` и `mtlr`.
+  * `Flags (Z, N)` — флаги состояния АЛУ: $Z$ (Zero), $N$ (Negative). Обновляются при активном сигнале `FLAGS_WE` (инструкции `cmpw`, `cmplw`, `cmpwi`).
 
 ### Способы адресации и отображение элементов языка
 * **Способы адресации:**
@@ -137,16 +138,13 @@
 2. I-type (Непосредственные операции / Память):
    [31:26 opcode (6)] [25:21 rd (5)] [20:16 rs1 (5)] [15:0 imm16 (16)]
 
-3. B-type (Условные переходы, PC-относительные):
-   [31:26 opcode (6)] [25:23 cond (3)] [22:0 offset23 (23)]
-
-4. J-type (Прыжки и вызовы процедур, PC-относительные):
+3. J/B-type (Условные и безусловные переходы, PC-относительные):
    [31:26 opcode (6)] [25:0 offset26 (26)]
 
-5. V-type (Векторные операции AltiVec):
+4. V-type (Векторные операции AltiVec):
    [31:26 opcode (6)] [25:21 vd (5)] [20:16 vs1 (5)] [15:11 vs2 (5)] [10:0 pad (11)]
 
-6. VL-type (Векторная загрузка / Сохранение):
+5. VL-type (Векторная загрузка / Сохранение):
    [31:26 opcode (6)] [25:21 vd (5)] [20:16 rs1 (5)] [15:0 imm16 (16)]
 ```
 
@@ -181,14 +179,14 @@
 | `lbz` | `lbz rD, d(rA)` | `0x19` | I | Чтение байта без знака: `rD = MEM[rA + d]` | 5 |
 | `stw` | `stw rS, d(rA)` | `0x20` | I | Запись слова в память: `MEM[rA + d] = rS` | 5 |
 | `stb` | `stb rS, d(rA)` | `0x21` | I | Запись байта в память: `MEM[rA + d] = rS[7:0]` | 5 |
-| `beq` | `beq label` | `0x28` | B | Переход, если $Z=1$ (равно) | 4 |
-| `bne` | `bne label` | `0x29` | B | Переход, если $Z=0$ (не равно) | 4 |
-| `blt` | `blt label` | `0x2A` | B | Переход, если $N=1$ (меньше) | 4 |
-| `bge` | `bge label` | `0x2B` | B | Переход, если $N=0$ (больше или равно) | 4 |
-| `ble` | `ble label` | `0x2C` | B | Переход, если $N=1 \lor Z=1$ | 4 |
-| `bgt` | `bgt label` | `0x2D` | B | Переход, если $N=0 \land Z=0$ | 4 |
-| `b` | `b target` | `0x30` | J | Безусловный переход: `PC = target` | 4 |
-| `bl` | `bl target` | `0x31` | J | Вызов функции: `LR = PC + 4; PC = target` | 5 |
+| `beq` | `beq label` | `0x28` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $Z=1$ (равно) | 4 |
+| `bne` | `bne label` | `0x29` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $Z=0$ (не равно) | 4 |
+| `blt` | `blt label` | `0x2A` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $N=1$ (меньше) | 4 |
+| `bge` | `bge label` | `0x2B` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $N=0$ (больше или равно) | 4 |
+| `ble` | `ble label` | `0x2C` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $N=1 \lor Z=1$ | 4 |
+| `bgt` | `bgt label` | `0x2D` | B | Переход на `PC + 4 + (sext(offset26) << 2)`, если $N=0 \land Z=0$ | 4 |
+| `b` | `b target` | `0x30` | J | Безусловный переход: `PC = PC + 4 + (sext(offset26) << 2)` | 4 |
+| `bl` | `bl target` | `0x31` | J | Вызов функции: `LR = PC + 4; PC = PC + 4 + (sext(offset26) << 2)` | 5 |
 | `blr` | `blr` | `0x32` | R | Возврат из функции: `PC = LR` | 4 |
 | `mflr` | `mflr rD` | `0x33` | R | Копирование link register в `rD` | 4 |
 | `vadduwm`| `vadduwm vD, vA, vB`| `0x34`| V | Параллельное сложение 4-х слов | 4 |
@@ -229,6 +227,11 @@
 * **Vector DataPath:** `Vector RF` (`VRF_WE`, `VR_ADDR`, `VRF_WB`, `VRS1_SEL`, `VRS2_SEL`, `EN0-EN31`, `Lane 0..3`, `MUX_Lk_R1`, `MUX_Lk_R2`), `Vector Address Decoder`, `MUX_VRF` (`VRF_SEL`), `VALU` (`VALU_OP`, `VALU_OUT`), `Splitter` (`Splitted Data`), `Packer` (`Packed Data`), `VCNT` (`VCNT_EN`, `VCNT_RST`, `VCNT_DONE`, `WORD_SEL`).
 * **Memory:** `MEM_ADDR`, `RDATA`, `WDATA`, `Splitted Data`, `Memory Address Decoder` (`MEM_SEL`), `RAM / MMIO`, `Byte Aligner` (`stb / stw Data`), `MUX_WDATA` (`WDATA_SEL`), `MEM_READ`, `MEM_WRITE`, `MEM_SIZE`.
 * **Control Unit:** `MAP_ROM` (`MAP_ADDR`), `MIR`, `MPC`, `MPC_INC (+1)`, `ROM` (`M_ADDR`, `Microcode`), `MUX_MPC` (`SEQ_OP`: `NEXT_MADDR`, `MPC_INC`, `MAP_ADDR`, `FLAG_STATUS`, `FETCH0`), `MUX_COND` (`COND_SEL`, `UNCOND`, `Flags`, `VCNT_DONE`, `Flag Status`).
+
+### Формат микроинструкции и особенности реализации моделирования
+* Управляющая память (`ROM`) хранит 256 микроинструкций (`MIR`), каждая из которых задаёт управляющие сигналы тракта данных (`SALU_A_SEL`, `SALU_B_SEL`, `SALU_OP`, `SRF_SEL`, `SRF_WE`, `VALU_OP`, `VRF_SEL`, `VRF_WE`, `VCNT_RST`, `VCNT_EN`, `PC_SEL`, `PC_EN`, `LR_SEL`, `LR_EN`, `AR_SEL`, `AR_EN`, `IR_EN`, `FLAGS_WE`, `MEM_READ`, `MEM_WRITE`, `MEM_SIZE`, `WDATA_SEL`, `HALT_EN`) и поля секвенсора (`COND_SEL`, `SEQ_OP`, `NEXT_MADDR`).
+* На каждом такте `ControlUnit.step()` считывает `ROM[MPC]` в `MIR`, выполняет микрооперации текущего такта, проверяет условие в `MUX_COND` и через `MUX_MPC` выбирает следующий адрес `MPC` (`FETCH0`, `MPC_INC`, `MAP_ADDR` из `MAP_ROM`, `NEXT_MADDR` или `FLAG_STATUS`).
+* Память реализована как разреженное 32-битное пространство (`SparseMemory`), ввод-вывод — через буферы `io_input_buffer` и `io_output_buffer`. Останов симуляции происходит при `HALT_EN=1` (`trap`) либо по достижении `--limit`.
 
 ### Таблица микрокода
 
@@ -324,17 +327,17 @@
 
 | Адрес `MPC` | Команда / Метка | Такт | Активные сигналы | Переход (`SEQ_OP`) | Действие |
 | :---: | :--- | :---: | :--- | :--- | :--- |
-| **`0x40`** | `BEQ_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (Z == 1 -> 0x4C)` / `MPC_INC` | **beq**: Если истина $\to$ `0x4C`, иначе `0x41` |
+| **`0x40`** | `BEQ_CHK` | 3 | `COND_SEL=EQ` | `FLAG_STATUS (Z == 1 -> 0x4C)` / `MPC_INC` | **beq**: Если истина $\to$ `0x4C`, иначе `0x41` |
 | **`0x41`** | `BEQ_NO` | 4 | *(Условие ложно, PC не меняем)* | `FETCH0` | Возврат на выборку |
-| **`0x42`** | `BNE_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (Z == 0 -> 0x4C)` / `MPC_INC` | **bne**: Если истина $\to$ `0x4C`, иначе `0x43` |
+| **`0x42`** | `BNE_CHK` | 3 | `COND_SEL=NE` | `FLAG_STATUS (Z == 0 -> 0x4C)` / `MPC_INC` | **bne**: Если истина $\to$ `0x4C`, иначе `0x43` |
 | **`0x43`** | `BNE_NO` | 4 | *(Условие ложно)* | `FETCH0` | Возврат на выборку |
-| **`0x44`** | `BLT_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (N == 1 -> 0x4C)` / `MPC_INC` | **blt**: Если истина $\to$ `0x4C`, иначе `0x45` |
+| **`0x44`** | `BLT_CHK` | 3 | `COND_SEL=LT` | `FLAG_STATUS (N == 1 -> 0x4C)` / `MPC_INC` | **blt**: Если истина $\to$ `0x4C`, иначе `0x45` |
 | **`0x45`** | `BLT_NO` | 4 | *(Условие ложно)* | `FETCH0` | Возврат на выборку |
-| **`0x46`** | `BGE_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (N == 0 -> 0x4C)` / `MPC_INC` | **bge**: Если истина $\to$ `0x4C`, иначе `0x47` |
+| **`0x46`** | `BGE_CHK` | 3 | `COND_SEL=GE` | `FLAG_STATUS (N == 0 -> 0x4C)` / `MPC_INC` | **bge**: Если истина $\to$ `0x4C`, иначе `0x47` |
 | **`0x47`** | `BGE_NO` | 4 | *(Условие ложно)* | `FETCH0` | Возврат на выборку |
-| **`0x48`** | `BLE_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (N == 1 \|\| Z == 1 -> 0x4C)` / `MPC_INC` | **ble**: Если истина $\to$ `0x4C`, иначе `0x49` |
+| **`0x48`** | `BLE_CHK` | 3 | `COND_SEL=LE` | `FLAG_STATUS (N == 1 \|\| Z == 1 -> 0x4C)` / `MPC_INC` | **ble**: Если истина $\to$ `0x4C`, иначе `0x49` |
 | **`0x49`** | `BLE_NO` | 4 | *(Условие ложно)* | `FETCH0` | Возврат на выборку |
-| **`0x4A`** | `BGT_CHK` | 3 | `COND_SEL=IR_COND` | `FLAG_STATUS (N == 0 && Z == 0 -> 0x4C)` / `MPC_INC` | **bgt**: Если истина $\to$ `0x4C`, иначе `0x4B` |
+| **`0x4A`** | `BGT_CHK` | 3 | `COND_SEL=GT` | `FLAG_STATUS (N == 0 && Z == 0 -> 0x4C)` / `MPC_INC` | **bgt**: Если истина $\to$ `0x4C`, иначе `0x4B` |
 | **`0x4B`** | `BGT_NO` | 4 | *(Условие ложно)* | `FETCH0` | Возврат на выборку |
 | **`0x4C`** | `BR_TAKEN`| 4 | `SALU_A_SEL=PC_OUT, SALU_B_SEL=IR_IMM, SALU_OP=ADD, PC_SEL=BRANCH_TARGET, PC_EN=1` | `FETCH0` | Общий шаг перехода: `PC <= Branch Target` |
 | **`0x4E`** | `B_PREP` | 3 | `SALU_A_SEL=PC_OUT, SALU_B_SEL=IR_IMM, SALU_OP=ADD` | `MPC_INC` | **b** (4 такта): подготовка `Target` |
@@ -381,9 +384,10 @@
 
 ## Транслятор и компоновщик
 
-### Архитектура транслятора (`src/translator.py`)
+### Архитектура транслятора (`src/translator/translator.py`)
 Транслятор преобразует исходный текст `.asm` в объектный файл `.o`, содержащий сериализованный объектный модуль (`ObjectModule`) с таблицами символов и релокаций.
 1. **Препроцессор:**
+   * Операторы выделения старших и младших 16 бит констант `@h(...)` и `@l(...)`.
    * Подстановка макросов `%macro` с аргументами.
    * Константы `.equ` / `.set`.
    * Условная компиляция `%ifdef ... %endif`.
@@ -397,7 +401,7 @@
    * Выравнивание директив `.word` по 4 байтам.
 4. **Второй проход (Pass 2):**
    * Генерация машинных слов.
-   * Формирование таблицы символов `symbols` и таблицы перемещений `relocations` (`ABS16`, `REL23`, `REL26`).
+   * Формирование таблицы символов `symbols` и таблицы перемещений `relocations` (`ABS16`, `REL26`).
 
 ### Компоновщик (`src/linker.py`)
 Линкер загружает произвольное число `.o`-файлов:
@@ -438,31 +442,32 @@
 
 3. Запуск бинарного файла:
    ```bash
-   python -m src.machine <binary_file.bin> [--log log_file.log] [--debug] [--limit limit_ticks]
+   python -m src.machine <binary_file.bin> [--input input.txt] [--log log_file.log] [--debug] [--limit limit_ticks]
    ```
 
 **Входные данные**:
 * `binary_file.bin` - исполняемый бинарный файл.
+* `input.txt` (опционально, `i`/`--input`) - файл с входными данными, поступающими по адресу ввода.
 
 **Выходные данные**:
-* `log_file.log` (опционально) - файл с логами. Если не указан путь к файлу, выводится в стандартный поток вывода. Флаг `--debug` дает подробный вывод по каждому такту. Флаг `--limit` устанавливает лимит на количество тактов.
+* `log_file.log` (опционально, `-l`/`--log`) - файл с логами. Если не указан путь к файлу, выводится в `stderr`. Флаг `--debug` дает подробный вывод по каждому такту. Флаг `--limit` устанавливает лимит на количество тактов.
 
 ---
 
 ## Тестирование
 
-Тестирование организовано через интеграционные **Golden Tests** на базе `pytest` и `pyyaml`.
+Тестирование организовано через интеграционные **Golden Tests** на базе `pytest` и `pyyaml`. Конфигурации тестов находятся в директории [golden](golden/). Модуль, запускающий тестирование, находится в [tests](tests/test_golden.py).
 
 ### Набор реализованных алгоритмов
 
-1. **`hello.asm`** — печать строки приветствия `Hello, World!` в формате `pstr` через раздельно скомпонованную библиотеку `lib_io.asm`.
-2. **`cat.asm`** — вывод строки из STDIN в STDOUT через порты MMIO.
-3. **`hello_user_name.asm`** — чтение имени пользователя из потока ввода, динамическое построение Pascal-строки и вывод приветствия `Hello, <name>!`.
-4. **`sort.asm`** — сортировка пузырьком массива 32-битных знаковых чисел и печать результата через библиотечную функцию `print_int`.
-5. **`double_prec.asm`** — арифметика двойной точности: 64-битное сложение двух чисел $(A_{hi}:A_{lo}) + (B_{hi}:B_{lo})$ на 32-битных регистрах с определением бита переноса через `cmplw` и сохранением результата в памяти данных.
-6. **`collatz_length.asm` (Вариант `alg2`)** — вычисление длины последовательности Коллатца для заданного числа $N$ ($N \to N/2$ при чётном, $N \to 3N+1$ при нечётном).
-7. **`infix_to_rpn.asm` (Вариант `alg2`)** — трансляция инфиксного математического выражения со скобками и приоритетами операций в обратную польскую нотацию (RPN) по алгоритму Дейкстры «сортировочная станция».
-8. **`pairwise_add_sub.asm` (Вариант `vector`)** — вычисление сумм и разностей пар чисел и вывод в порядке: `sum0, diff0, sum1, diff1`.
+1. **[`hello.asm`](examples/hello.asm) / [`hello.yml`](golden/hello.yml)** — печать строки приветствия `Hello, World!` в формате `pstr` через раздельно скомпонованную библиотеку [`lib_io.asm`](examples/lib_io.asm).
+2. **[`cat.asm`](examples/cat.asm) / [`cat.yml`](golden/cat.yml)** — вывод строки из STDIN в STDOUT через порты MMIO.
+3. **[`hello_user_name.asm`](examples/hello_user_name.asm) / [`hello_user_name.yml`](golden/hello_user_name.yml)** — чтение имени пользователя из потока ввода, динамическое построение Pascal-строки и вывод приветствия `Hello, <name>!`.
+4. **[`sort.asm`](examples/sort.asm) / [`sort.yml`](golden/sort.yml)** — сортировка пузырьком массива 32-битных знаковых чисел.
+5. **[`double_prec.asm`](examples/double_prec.asm) / [`double_prec.asm`](golden/double_prec.yml)** — арифметика двойной точности: 64-битное сложение двух чисел $(A_{hi}:A_{lo}) + (B_{hi}:B_{lo})$ на 32-битных регистрах.
+6. **[`collatz_length.asm`](examples/collatz_length.asm) / [`collatz_length.yml`](golden/collatz_length.yml) (Вариант `alg2`)** — вычисление длины последовательности Коллатца для заданного числа $N$ ($N \to N/2$ при чётном, $N \to 3N+1$ при нечётном).
+7. **[`infix_to_rpn.asm`](examples/infix_to_rpn.asm) / [`infix_to_rpn.yml`](golden/infix_to_rpn.yml) (Вариант `alg2`)** — трансляция инфиксного математического выражения со скобками и приоритетами операций в обратную польскую нотацию (RPN) по алгоритму Дейкстры «сортировочная станция».
+8. **[`pairwise_add_sub.asm`](examples/pairwise_add_sub.asm) / [`pairwise_add_sub.yml`](golden/pairwise_add_sub.yml) (Вариант `vector`)** — вычисление сумм и разностей пар чисел и вывод в порядке: `sum0, diff0, sum1, diff1`.
 
 ---
 
@@ -521,11 +526,11 @@
 
 | Метрика | Скалярный алгоритм | Векторный AltiVec | Ускорение (Speedup) |
 |---|:---:|:---:|:---:|
-| Выполненных инструкций | 60 | 15 | **4x** |
-| Затрачено тактов симулятора | 256 | 64 | **4x** |
-| Число обращений к памяти | 16 (8 чтений, 8 записей) | 4 (2 lvx, 2 stvx) | **4x** |
+| Выполненных инструкций | 60 | 15 | **4.00x** |
+| Затрачено тактов симулятора | 256 | 72 | **3.56x** |
+| Число инструкций доступа к памяти | 16 (8 `lwz`, 8 `stw`) | 4 (2 `lvx`, 2 `stvx`) | **4.00x** |
 
-**Вывод:** использование SIMD-инструкций AltiVec исключает накладные расходы на арифметику массивов слов, обеспечивая **четырехкратный прирост производительности по тактам**.
+**Вывод:** использование SIMD-инструкций AltiVec сокращает число выполняемых инструкций и команд обращения к памяти в **4 раза**, обеспечивая **3.56-кратный прирост производительности по тактам**.
 
 ---
 
@@ -540,6 +545,7 @@ pip install pytest pyyaml ruff mypy
 ### Статический анализ
 ```bash
 ruff check src tests
+ruff format --check src tests
 mypy src
 ```
 
