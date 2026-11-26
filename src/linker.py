@@ -50,12 +50,20 @@ class Linker:
                     raise KeyError(f"Undefined symbol: '{reloc.symbol}' in module {mod.name}")
 
                 word = int.from_bytes(image[patch_addr : patch_addr + 4], "little")
-                if reloc.rel_type in ("ABS16", "BRANCH16"):
-                    word &= ~(0xFFFF << 2)
-                    word |= (target_addr & 0xFFFF) << 2
-                elif reloc.rel_type == "JUMP20":
-                    word &= ~(0xFFFFF << 2)
-                    word |= (target_addr & 0xFFFFF) << 2
+                if reloc.rel_type == "ABS16":
+                    word &= ~0xFFFF
+                    word |= target_addr & 0xFFFF
+                elif reloc.rel_type == "REL26":
+                    diff = target_addr - (patch_addr + 4)
+                    if diff & 0x3:
+                        raise ValueError(f"Unaligned branch/jump target for '{reloc.symbol}': {target_addr:#x}")
+                    word_off = diff >> 2
+                    if not (-(1 << 25) <= word_off < (1 << 25)):
+                        raise ValueError(f"Branch/jump target out of 26-bit range for '{reloc.symbol}'")
+                    word &= ~0x3FFFFFF
+                    word |= word_off & 0x3FFFFFF
+                else:
+                    raise ValueError(f"Unsupported relocation type: '{reloc.rel_type}'")
 
                 image[patch_addr : patch_addr + 4] = word.to_bytes(4, "little")
 
@@ -89,10 +97,14 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     base_addr = linker.modules[0].base_org if linker.modules[0].base_org is not None else DEFAULT_BASE
+    current_addr = base_addr
     end_addr = base_addr
     for module in linker.modules:
-        end_addr += len(module.code_bytes)
-    end_addr = (end_addr + 3) & ~3
+        if module.base_org is not None:
+            current_addr = module.base_org
+        current_addr += len(module.code_bytes)
+        current_addr = (current_addr + 3) & ~3
+        end_addr = max(end_addr, current_addr)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
