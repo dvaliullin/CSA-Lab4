@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.translator.encoder import InstructionEncoder
+from src.translator.encoder import InstructionEncoder, _is_int_literal
 from src.translator.object_module import ObjectModule, RelocationEntry, SectionItem
 from src.translator.preprocessor import Preprocessor
 
@@ -80,7 +80,7 @@ class Assembler:
             elif mnemonic == "nop":
                 mnemonic = "ori"
                 args = ["r0", "r0", "0"]
-            elif len(args) == 3 and (args[2].lstrip("-").isdigit() or args[2].startswith("0x")):
+            elif len(args) == 3 and _is_int_literal(args[2]):
                 shift_map = {"slw": "slwi", "srw": "srwi", "sraw": "srawi"}
                 if mnemonic in shift_map:
                     mnemonic = shift_map[mnemonic]
@@ -92,13 +92,21 @@ class Assembler:
         ordered_items = text_items + data_items
 
         current_offset = 0
-        for it in ordered_items:
+        for idx, it in enumerate(ordered_items):
+            next_mnemonic = it.mnemonic
+            if not next_mnemonic:
+                for next_it in ordered_items[idx + 1 :]:
+                    if next_it.mnemonic:
+                        next_mnemonic = next_it.mnemonic
+                        break
+            if next_mnemonic == ".word":
+                current_offset = (current_offset + 3) & ~3
+
             if it.label:
                 module.symbols[it.label] = current_offset
 
             if it.mnemonic in (".word", ".byte", ".pstr", ".string"):
                 if it.mnemonic == ".word":
-                    current_offset = (current_offset + 3) & ~3
                     cnt = len(" ".join(it.args).replace(",", " ").split())
                     current_offset += 4 * cnt
                 elif it.mnemonic == ".byte":
@@ -118,8 +126,6 @@ class Assembler:
                 current_offset += 4
 
         for it in ordered_items:
-            offset = module.symbols.get(it.label, 0) if it.label else len(module.code_bytes)
-
             if it.mnemonic == ".word":
                 while len(module.code_bytes) % 4 != 0:
                     module.code_bytes.append(0)
@@ -142,6 +148,7 @@ class Assembler:
                 module.code_bytes.append(len(pstr_content) & 0xFF)
                 module.code_bytes.extend(pstr_content.encode("ascii"))
             elif it.mnemonic:
+                offset = module.symbols.get(it.label, 0) if it.label else len(module.code_bytes)
                 word = InstructionEncoder.encode(it.mnemonic, it.args, offset, module)
                 module.code_bytes.extend(word.to_bytes(4, "little", signed=False))
 
